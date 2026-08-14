@@ -1,11 +1,11 @@
 # Multica DSH Runtime
 
-Private, out-of-tree runtime bridge between Multica and the public
+Out-of-tree runtime bridge between Multica and the public
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It exposes
 a versioned JSONL protocol over stdio and composes over
 `@deepseek-ai/dsh-base`. It does not require changes to DeepSeek Harness.
 
-![DeepSeek Harness runtime online in Multica](docs/images/multica-dsh-runtime.png)
+![DeepSeek Harness runtime online in Multica](https://unpkg.com/@multica-ai/dsh-runtime@0.1.0/docs/images/multica-dsh-runtime.png)
 
 ## Privacy
 
@@ -14,6 +14,37 @@ a versioned JSONL protocol over stdio and composes over
 - Never commit API keys, MCP secrets, session logs, or generated profiles.
 - DSH telemetry is disabled by the bundle patch.
 - stdout is protocol-only; diagnostics go to stderr.
+
+## Installation
+
+Install the runtime bundle into a dedicated DSH profile:
+
+```bash
+dsh plugin --profile multica add @multica-ai/dsh-runtime@0.1.0
+```
+
+Verify the installed profile before starting Multica:
+
+```bash
+dsh --profile multica --probe
+dsh --profile multica --list-models
+```
+
+Multica discovers the profile only after `--probe` reports protocol version 1.
+The plugin and Multica must use the same `DSH_HOME` when a non-default DSH home
+is configured. For a non-standard DSH installation, point the daemon at its
+launcher:
+
+```bash
+export MULTICA_DSH_PATH=/absolute/path/to/dsh
+```
+
+To update or remove the bundle:
+
+```bash
+dsh plugin --profile multica update @multica-ai/dsh-runtime
+dsh plugin --profile multica remove @multica-ai/dsh-runtime
+```
 
 ## Local development
 
@@ -39,13 +70,6 @@ The plugin supports:
 dsh --profile multica --probe
 dsh --profile multica --list-models
 dsh --profile multica --stdio
-```
-
-Multica discovers the profile only after `--probe` returns protocol version 1.
-For a non-standard DSH installation, point the daemon at its launcher:
-
-```bash
-export MULTICA_DSH_PATH=/absolute/path/to/dsh
 ```
 
 The runtime contract includes:

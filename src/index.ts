@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -35,7 +36,17 @@ import { installMulticaTerminalEnvironment } from './environment.js'
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
 
-const PLUGIN_VERSION = '0.1.0-private.1'
+function loadPluginVersion(): string {
+  const metadata = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { version?: unknown }
+  if (typeof metadata.version !== 'string' || metadata.version.length === 0) {
+    throw new Error('package.json does not declare a valid version')
+  }
+  return metadata.version
+}
+
+const PLUGIN_VERSION = loadPluginVersion()
 
 interface ActiveRun {
   command: ExecuteCommand
