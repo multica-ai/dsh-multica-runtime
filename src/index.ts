@@ -419,7 +419,15 @@ async function execute(ctx: Context, active: ActiveRun): Promise<number> {
 }
 
 async function stdio(ctx: Context): Promise<number> {
-  installMulticaTerminalEnvironment(ctx)
+  const forwarding = await installMulticaTerminalEnvironment(ctx)
+  if (forwarding !== undefined && !forwarding.forwarded) {
+    // Fail loudly at boot instead of twenty seconds later, as an opaque
+    // "requires a task-scoped mat_ token" refusal on the agent's first
+    // `multica` call (MUL-6186).
+    writeDiagnostic(
+      'MULTICA_TOKEN is not reaching model-spawned subprocesses; in-task multica commands will be refused',
+    )
+  }
   const activeRef: { current?: ActiveRun; finished: boolean } = { finished: false }
   ctx.on('session/event', (session, event: SessionEvent) => {
     if (activeRef.current !== undefined) observeSessionEvent(activeRef.current, session, event)
