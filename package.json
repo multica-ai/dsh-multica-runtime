@@ -1,11 +1,20 @@
 {
   "name": "@multica-ai/dsh-runtime",
-  "version": "0.1.0-private.1",
-  "private": true,
-  "description": "Private DeepSeek Harness runtime bridge for Multica",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness runtime bridge for Multica",
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "multica",
+    "runtime"
+  ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dsh-external/dsh-multica-runtime.git"
+    "url": "git+https://github.com/multica-ai/dsh-multica-runtime.git"
+  },
+  "homepage": "https://github.com/multica-ai/dsh-multica-runtime#readme",
+  "bugs": {
+    "url": "https://github.com/multica-ai/dsh-multica-runtime/issues"
   },
   "type": "module",
   "main": "dist/index.js",
@@ -27,7 +36,13 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "prepack": "pnpm build",
+    "prepublishOnly": "pnpm check",
+    "release:check": "pnpm check && npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

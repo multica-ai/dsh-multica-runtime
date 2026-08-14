@@ -1,5 +1,5 @@
-# Private Multica runtime surface over dsh-base. It intentionally exposes no
-# HTTP listener and disables DSH telemetry so private task content never leaves
+# Headless Multica runtime surface over dsh-base. It intentionally exposes no
+# HTTP listener and disables DSH telemetry so task content never leaves
 # the machine except through the explicitly selected model and MCP providers.
 
 - id: hmr
