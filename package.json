@@ -30,7 +30,6 @@
   "files": [
     "dist",
     "cordis.patch.yml",
-    "docs/images/multica-dsh-runtime.png",
     "README.md"
   ],
   "scripts": {

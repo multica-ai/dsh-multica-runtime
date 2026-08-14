@@ -5,7 +5,7 @@ Out-of-tree runtime bridge between Multica and the public
 a versioned JSONL protocol over stdio and composes over
 `@deepseek-ai/dsh-base`. It does not require changes to DeepSeek Harness.
 
-![DeepSeek Harness runtime online in Multica](https://unpkg.com/@multica-ai/dsh-runtime@0.1.0/docs/images/multica-dsh-runtime.png)
+![DeepSeek Harness runtime online in Multica](https://raw.githubusercontent.com/multica-ai/dsh-multica-runtime/main/docs/images/multica-dsh-runtime.png)
 
 ## Privacy
 
