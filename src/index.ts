@@ -15,6 +15,7 @@ import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
@@ -314,6 +315,8 @@ async function createOrResumeAgent(
   const selected: ModelSelectionRef = { current: selection, assembled: undefined }
   const setup = async (agentCtx: Context): Promise<void> => {
     installModelSelection(agentCtx, selected)
+    const presets = ctx.get('agentPresets')
+    if (presets !== undefined) await presets.mount(agentCtx)
     agentCtx.on('approval/request', (_request, next) => {
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
       return Promise.resolve<ApprovalOutcome>('allowed-once').catch(() => next())
