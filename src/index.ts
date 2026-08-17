@@ -26,12 +26,15 @@ import {
   parseInboundCommand,
   PROTOCOL_VERSION,
   truncateUtf8,
+  type AcceptanceCheckResult,
   type ExecuteCommand,
   type McpServerInput,
   type OutboundFrame,
   type RuntimeModelFrame,
+  type TaskContractInput,
 } from './protocol.js'
 import { installMulticaTerminalEnvironment } from './environment.js'
+import { runAcceptanceChecks } from './acceptance.js'
 
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
@@ -69,6 +72,22 @@ function writeDiagnostic(message: string): void {
 
 function protocolError(code: string, message: string): void {
   writeFrame({ v: PROTOCOL_VERSION, type: 'protocol_error', code, message })
+}
+
+function writeProgress(
+  requestId: string,
+  phase: string,
+  data?: Record<string, unknown>,
+  message?: string,
+): void {
+  writeFrame({
+    v: PROTOCOL_VERSION,
+    type: 'progress',
+    request_id: requestId,
+    phase,
+    ...message === undefined ? {} : { message },
+    ...data === undefined ? {} : { data },
+  })
 }
 
 function parseMode(args: readonly string[]): 'stdio' | 'probe' | 'list-models' {
@@ -203,6 +222,35 @@ function renderBlock(block: ContentBlock): string {
   }
 }
 
+function taskContractPrompt(contract: TaskContractInput): string {
+  const lines = [
+    '## Task Contract',
+    `Goal: ${contract.goal}`,
+  ]
+  if (contract.acceptance !== undefined && contract.acceptance.length > 0) {
+    lines.push('Acceptance criteria:')
+    for (const [index, criterion] of contract.acceptance.entries()) {
+      lines.push(`${index + 1}. ${criterion}`)
+    }
+  }
+  if (contract.state_file !== undefined) {
+    lines.push(`State file: ${contract.state_file}`)
+  }
+  if (contract.required_checks !== undefined && contract.required_checks.length > 0) {
+    lines.push('Required checks:')
+    for (const check of contract.required_checks) {
+      lines.push(`- ${check}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+function userPromptWithContract(command: ExecuteCommand): string {
+  const contract = command.task_contract
+  if (contract === undefined) return command.prompt
+  return `${taskContractPrompt(contract)}\n\n---\n\n${command.prompt}`
+}
+
 function observeSessionEvent(active: ActiveRun, session: Agent['session'], event: SessionEvent): void {
   if (active.agent?.session !== session || event.seq < active.firstSeq) return
   const requestId = active.command.request_id
@@ -275,34 +323,53 @@ async function drainContinuableSubagents(ctx: Context, agent: Agent): Promise<vo
   await subagents?.drainContinuableDescendants?.([agent])
 }
 
-function resultFromReason(active: ActiveRun): Omit<Extract<OutboundFrame, { type: 'result' }>, 'v' | 'type' | 'request_id' | 'session_id'> {
-  const reason = active.endReason
-  if (active.cancelRequested) {
-    return { status: 'cancelled', output: active.lastText, stop_reason: 'cancelled', resume_rejected: false }
-  }
-  if (reason?.kind === 'completed' || reason?.kind === 'max-tokens') {
-    return { status: 'completed', output: active.lastText, stop_reason: reason.kind, resume_rejected: false }
-  }
-  if (reason?.kind === 'aborted') {
-    return { status: 'aborted', output: active.lastText, stop_reason: reason.kind, resume_rejected: false }
-  }
-  if (reason?.kind === 'error') {
+function resultFromReason(
+  active: ActiveRun,
+  acceptance?: { passed: boolean; checks: AcceptanceCheckResult[] },
+): Omit<Extract<OutboundFrame, { type: 'result' }>, 'v' | 'type' | 'request_id' | 'session_id'> {
+  if (acceptance !== undefined && !acceptance.passed) {
     return {
       status: 'failed',
       output: active.lastText,
-      stop_reason: reason.kind,
+      stop_reason: 'acceptance-failed',
       resume_rejected: false,
-      error: { code: reason.error.code, message: reason.error.message },
+      error: {
+        code: 'ACCEPTANCE_CHECKS_FAILED',
+        message: 'one or more required acceptance checks failed',
+      },
+      acceptance,
     }
   }
-  const stopReason = reason?.kind ?? 'no-turn-result'
-  return {
-    status: 'failed',
-    output: active.lastText,
-    stop_reason: stopReason,
-    resume_rejected: false,
-    error: { code: 'DSH_TURN_FAILED', message: `DSH turn ended with ${stopReason}` },
-  }
+  const reason = active.endReason
+  const result = (() => {
+    if (active.cancelRequested) {
+      return { status: 'cancelled' as const, output: active.lastText, stop_reason: 'cancelled', resume_rejected: false }
+    }
+    if (reason?.kind === 'completed' || reason?.kind === 'max-tokens') {
+      return { status: 'completed' as const, output: active.lastText, stop_reason: reason.kind, resume_rejected: false }
+    }
+    if (reason?.kind === 'aborted') {
+      return { status: 'aborted' as const, output: active.lastText, stop_reason: reason.kind, resume_rejected: false }
+    }
+    if (reason?.kind === 'error') {
+      return {
+        status: 'failed' as const,
+        output: active.lastText,
+        stop_reason: reason.kind,
+        resume_rejected: false,
+        error: { code: reason.error.code, message: reason.error.message },
+      }
+    }
+    const stopReason = reason?.kind ?? 'no-turn-result'
+    return {
+      status: 'failed' as const,
+      output: active.lastText,
+      stop_reason: stopReason,
+      resume_rejected: false,
+      error: { code: 'DSH_TURN_FAILED', message: `DSH turn ended with ${stopReason}` },
+    }
+  })()
+  return acceptance === undefined ? result : { ...result, acceptance }
 }
 
 async function createOrResumeAgent(
@@ -358,36 +425,75 @@ async function execute(ctx: Context, active: ActiveRun): Promise<number> {
   let handle: AgentHandle | undefined
   try {
     if (!isAbsolute(active.command.cwd)) throw new Error('execute.cwd must be an absolute path')
+    const requestId = active.command.request_id
     const selection = await resolveSelection(ctx, active.command)
+    writeProgress(requestId, 'model_resolved', {
+      provider: selection.provider,
+      model: selection.model,
+      ...selection.reasoningEffort === undefined ? {} : { reasoning_effort: String(selection.reasoningEffort) },
+    })
     const created = await createOrResumeAgent(ctx, active, selection)
     handle = created.handle
     active.agent = handle.agent
     await handle.agent.whenIdle()
     active.firstSeq = handle.agent.session.seq
+    const sessionId = String(handle.agent.session.id)
+    writeProgress(requestId, created.resumed ? 'agent_resumed' : 'agent_created', { session_id: sessionId })
     writeFrame({
       v: PROTOCOL_VERSION,
       type: 'session',
-      request_id: active.command.request_id,
-      session_id: String(handle.agent.session.id),
+      request_id: requestId,
+      session_id: sessionId,
       resumed: created.resumed,
     })
+    writeProgress(requestId, 'session_ready', { session_id: sessionId })
+
+    if (active.command.task_contract !== undefined) {
+      const contract = active.command.task_contract
+      writeProgress(requestId, 'task_contract', {
+        goal: contract.goal,
+        acceptance_count: contract.acceptance?.length ?? 0,
+        required_checks_count: contract.required_checks?.length ?? 0,
+        ...contract.state_file === undefined ? {} : { state_file: contract.state_file },
+      })
+    }
+
     if (!active.cancelRequested) {
       handle.agent.followup(createUserMessage({
-        content: [{ type: 'text', text: active.command.prompt }],
+        content: [{ type: 'text', text: userPromptWithContract(active.command) }],
         source: { kind: 'user' },
       }))
+      writeProgress(requestId, 'prompt_sent')
       await handle.agent.whenIdle()
+      writeProgress(requestId, 'agent_idle')
     }
+
     await drainContinuableSubagents(ctx, handle.agent)
+    writeProgress(requestId, 'subagents_drained')
+
+    const requiredChecks = active.command.task_contract?.required_checks
+    let acceptance: { passed: boolean; checks: AcceptanceCheckResult[] } | undefined
+    if (requiredChecks !== undefined && requiredChecks.length > 0) {
+      const checks = await runAcceptanceChecks(requiredChecks, active.command.cwd, (check, index) => {
+        writeProgress(requestId, 'acceptance_check', {
+          index,
+          command: check.command,
+          exit_code: check.exit_code,
+          passed: check.passed,
+        })
+      })
+      acceptance = { passed: checks.every(check => check.passed), checks }
+    }
+
     await sessions.flush(handle.agent.session)
-    const sessionId = String(handle.agent.session.id)
-    const result = resultFromReason(active)
+    writeProgress(requestId, 'session_flushed', { session_id: sessionId })
+    const result = resultFromReason(active, acceptance)
     await handle.dispose()
     handle = undefined
     writeFrame({
       v: PROTOCOL_VERSION,
       type: 'result',
-      request_id: active.command.request_id,
+      request_id: requestId,
       session_id: sessionId,
       ...result,
     })
@@ -500,6 +606,8 @@ async function stdio(ctx: Context): Promise<number> {
       thinking: true,
       usage: true,
       tools: true,
+      progress: true,
+      acceptance: true,
       mcp: ['stdio', 'streamable-http'],
     },
   })
