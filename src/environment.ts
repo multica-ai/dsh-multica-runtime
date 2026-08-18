@@ -125,4 +125,4 @@ export async function installMulticaTerminalEnvironment(
   return { patched, forwarded: scrub()[TASK_TOKEN_KEY] !== undefined }
 }
 
-export { multicaTerminalEnvironment } from './task-env.js'
+export { multicaTerminalEnvironment, TASK_ISSUE_ID_KEY } from './task-env.js'

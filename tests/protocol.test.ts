@@ -17,6 +17,23 @@ describe('Multica terminal environment', () => {
     })).toEqual({ MULTICA_TOKEN: 'mat_task-token' })
   })
 
+  it('forwards a non-empty issue id alongside the task token', () => {
+    expect(multicaTerminalEnvironment({
+      MULTICA_TOKEN: 'mat_task-token',
+      MULTICA_ISSUE_ID: '049c05e8-70ed-4c43-8ffa-9a313bb94c50',
+    })).toEqual({
+      MULTICA_TOKEN: 'mat_task-token',
+      MULTICA_ISSUE_ID: '049c05e8-70ed-4c43-8ffa-9a313bb94c50',
+    })
+  })
+
+  it('does not forward an empty issue id', () => {
+    expect(multicaTerminalEnvironment({
+      MULTICA_TOKEN: 'mat_task-token',
+      MULTICA_ISSUE_ID: '',
+    })).toEqual({ MULTICA_TOKEN: 'mat_task-token' })
+  })
+
   it('does not forward a user PAT or arbitrary credentials', () => {
     expect(multicaTerminalEnvironment({
       MULTICA_TOKEN: 'mul_user-token',
@@ -33,6 +50,7 @@ describe('parseInboundCommand', () => {
       request_id: 'request-1',
       cwd: '/work',
       prompt: 'run tests',
+      issue_id: '049c05e8-70ed-4c43-8ffa-9a313bb94c50',
       model: { provider: 'deepseek-official', id: 'deepseek-v4-flash', reasoning_effort: 'high' },
       reasoning_effort: 'max',
       mcp_servers: [{
@@ -48,6 +66,7 @@ describe('parseInboundCommand', () => {
       request_id: 'request-1',
       cwd: '/work',
       prompt: 'run tests',
+      issue_id: '049c05e8-70ed-4c43-8ffa-9a313bb94c50',
       model: { provider: 'deepseek-official', id: 'deepseek-v4-flash', reasoning_effort: 'high' },
       reasoning_effort: 'max',
       mcp_servers: [{

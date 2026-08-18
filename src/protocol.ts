@@ -54,6 +54,7 @@ export interface ExecuteCommand {
   cwd: string
   prompt: string
   resume_session_id?: string
+  issue_id?: string
   model?: ModelSelectionInput
   reasoning_effort?: string
   mcp_servers: McpServerInput[]
@@ -301,7 +302,7 @@ export function parseInboundCommand(line: string): InboundCommand {
   if (type === 'execute') {
     assertOnlyKeys(
       command,
-      ['v', 'type', 'request_id', 'cwd', 'prompt', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers', 'task_contract'],
+      ['v', 'type', 'request_id', 'cwd', 'prompt', 'resume_session_id', 'issue_id', 'model', 'reasoning_effort', 'mcp_servers', 'task_contract'],
       'execute command',
     )
     return {
@@ -313,6 +314,9 @@ export function parseInboundCommand(line: string): InboundCommand {
       ...optionalString(command.resume_session_id, 'execute.resume_session_id') === undefined
         ? {}
         : { resume_session_id: optionalString(command.resume_session_id, 'execute.resume_session_id') },
+      ...optionalString(command.issue_id, 'execute.issue_id') === undefined
+        ? {}
+        : { issue_id: optionalString(command.issue_id, 'execute.issue_id') },
       ...parseModel(command.model) === undefined ? {} : { model: parseModel(command.model) },
       ...optionalString(command.reasoning_effort, 'execute.reasoning_effort') === undefined
         ? {}

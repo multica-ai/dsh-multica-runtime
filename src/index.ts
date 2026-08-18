@@ -33,7 +33,7 @@ import {
   type RuntimeModelFrame,
   type TaskContractInput,
 } from './protocol.js'
-import { installMulticaTerminalEnvironment } from './environment.js'
+import { installMulticaTerminalEnvironment, TASK_ISSUE_ID_KEY } from './environment.js'
 import { runAcceptanceChecks } from './acceptance.js'
 
 export const name = 'multica-dsh-runtime'
@@ -88,6 +88,14 @@ function writeProgress(
     ...message === undefined ? {} : { message },
     ...data === undefined ? {} : { data },
   })
+}
+
+function applyTaskIssueEnvironment(command: ExecuteCommand): void {
+  if (command.issue_id === undefined) {
+    delete process.env[TASK_ISSUE_ID_KEY]
+    return
+  }
+  process.env[TASK_ISSUE_ID_KEY] = command.issue_id
 }
 
 function parseMode(args: readonly string[]): 'stdio' | 'probe' | 'list-models' {
@@ -557,6 +565,7 @@ async function stdio(ctx: Context): Promise<number> {
           protocolError('DUPLICATE_EXECUTE', 'this DSH process accepts exactly one execute command')
           return
         }
+        applyTaskIssueEnvironment(command)
         const active: ActiveRun = {
           command,
           firstSeq: Number.MAX_SAFE_INTEGER,
