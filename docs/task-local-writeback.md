@@ -1,14 +1,16 @@
-# 任务内本地回写闭环
+# In-task local writeback loop
 
-`dsh-multica-runtime` 仅负责把 Multica 任务的 `issue_id` 通过
-`MULTICA_ISSUE_ID` 环境变量透传给模型生成的子进程。任务内是否回写、何时回写，
-由任务自身通过 `multica` CLI 和本目录中的脚本完成，平台编排不需要任何改动。
+`dsh-multica-runtime` only forwards a Multica task's `issue_id` to model-spawned
+subprocesses through the `MULTICA_ISSUE_ID` environment variable. Whether and when
+a task writes back is decided by the task itself via the `multica` CLI and the
+scripts in this directory; no platform orchestration changes are required.
 
-## 前置条件
+## Prerequisites
 
-1. 任务内已存在有效的 `MULTICA_TOKEN`（`mat_` 前缀）。运行时会按既有安全策略
-   只透传该 token，不修改任何 provider credential 的脱敏逻辑。
-2. 下发 `execute` 命令时携带可选 `issue_id` 字段，例如：
+1. A valid `MULTICA_TOKEN` (with the `mat_` prefix) already exists inside the task.
+   The runtime forwards only this token following existing security policy and does
+   not change any provider-credential scrubbing logic.
+2. The `execute` command carries an optional `issue_id` field, for example:
 
    ```json
    {
@@ -16,36 +18,39 @@
      "type": "execute",
      "request_id": "req-1",
      "cwd": "/work",
-     "prompt": "修复问题",
+     "prompt": "Fix the issue",
      "issue_id": "049c05e8-70ed-4c43-8ffa-9a313bb94c50"
    }
    ```
 
-   运行时收到该字段后，会把 `process.env.MULTICA_ISSUE_ID` 设置为该值。
-3. `multica` CLI 在任务内可用，并继承 `MULTICA_TOKEN` 与 `MULTICA_ISSUE_ID`。
+   When the runtime receives this field, it sets `process.env.MULTICA_ISSUE_ID` to
+   that value.
+3. The `multica` CLI is available inside the task and inherits `MULTICA_TOKEN` and
+   `MULTICA_ISSUE_ID`.
 
-## 进度回写
+## Progress writeback
 
-任务执行过程中，把 `progress.jsonl` 中最新一条含 `phase` 或 `last_artifact`
-的记录写入 issue metadata：
+During task execution, write the latest `progress.jsonl` record containing `phase`
+or `last_artifact` into issue metadata:
 
 ```bash
 node scripts/multica-local-progress.mjs .multica/progress.jsonl
 ```
 
-脚本会依次执行：
+The script runs, in order:
 
 ```bash
 multica issue metadata set <issue-id> --key phase --value <phase> --type string
 multica issue metadata set <issue-id> --key last_artifact --value <artifact> --type string
 ```
 
-`progress.jsonl` 每行是一个 JSON 对象，脚本按顺序扫描，后出现的
-`phase` / `last_artifact` 覆盖先出现的值；只要二者至少存在一个，脚本即成功。
+Each line in `progress.jsonl` is a JSON object. The script scans lines in order,
+and later `phase` / `last_artifact` values overwrite earlier ones. It succeeds as
+long as at least one of the two fields is present.
 
-## 验收回写
+## Acceptance writeback
 
-任务完成并跑完 `required_checks` 后调用：
+After the task finishes and runs `required_checks`, call:
 
 ```bash
 node scripts/multica-local-acceptance.mjs \
@@ -53,41 +58,47 @@ node scripts/multica-local-acceptance.mjs \
   --log .multica/acceptance.log
 ```
 
-失败时：
+On failure:
 
 ```bash
 node scripts/multica-local-acceptance.mjs \
   --result failed \
   --log .multica/acceptance.log \
-  --summary "required_checks 中 pnpm test 退出码为 1"
+  --summary "pnpm test in required_checks exited with code 1"
 ```
 
-脚本行为：
+Script behavior:
 
-- `passed`：将 issue 置为 `in_review`。
-- `failed`：将 issue 置为 `blocked`。
-- 生成评论文件到 `.multica/acceptance-comment.md`，并通过
-  `multica issue comment add <issue-id> --content-file <file>` 发布。
-- 评论中包含结果、摘要、失败原因和日志摘要。
+- `passed`: sets the issue to `in_review`.
+- `failed`: sets the issue to `blocked`.
+- Generates a comment file at `.multica/acceptance-comment.md` and publishes it with
+  `multica issue comment add <issue-id> --content-file <file>`.
+- The comment includes the result, summary, failure reason, and log summary.
 
-## 幂等与防抖动
+## Idempotency and anti-flapping
 
-- 状态修改前先读取 `multica issue get`，只有当前状态与目标状态不同才调用
-  `multica issue status`，避免无意义的状态切换。
-- 评论发布前先比较 issue metadata 中的 `local_acceptance_fingerprint`。
-  指纹由 `result + summary + log` 计算得到；指纹相同则跳过评论，避免重复评论。
-- 评论发布成功后才把新指纹写入 `local_acceptance_fingerprint`。如果评论失败，
-  下次重跑仍会尝试发布。
-- 若日志内容或摘要变化，指纹会变化，此时允许发布一条新的验收评论；这是有意
-  的“可覆盖”，便于对失败修复后再次报告。
+- Before changing status, the script reads `multica issue get` and only calls
+  `multica issue status` when the current status differs from the target, avoiding
+  meaningless status transitions.
+- Before publishing a comment, it compares `local_acceptance_fingerprint` in issue
+  metadata. The fingerprint is computed from `result + summary + log`; if it is
+  unchanged, the comment is skipped to avoid duplicates.
+- The new fingerprint is written to `local_acceptance_fingerprint` only after the
+  comment is published successfully. If the comment fails, the next retry still
+  attempts to publish it.
+- If the log content or summary changes, the fingerprint changes, allowing a new
+  acceptance comment. This intentional "overwrite" behavior lets the task report
+  again after fixing a failure.
 
-## 与平台原生 acceptance 消费共存
+## Coexisting with platform-native acceptance consumption
 
-平台未来如果在 WIN-94 中直接消费 runtime 出站的 `acceptance` 帧，本地脚本仍可
-安全运行：
+If the platform later consumes the runtime's outgoing `acceptance` frame directly
+(WIN-94), the local scripts can still run safely:
 
-- 本地脚本只使用 issue metadata 和 issue comment/status 这些用户态接口，不读取
-  或修改 runtime 的 protocol 帧。
-- 状态与评论均为幂等；平台回写与本地回写到达顺序不同，也不会造成状态抖动。
-- 平台侧应继续消费 runtime 的 `progress` / `result.acceptance`，本地 metadata
-  只是给当前 Multica 上层提供可读的短状态，不替代平台数据源。
+- The local scripts only use user-level interfaces such as issue metadata and issue
+  comment/status; they do not read or modify runtime protocol frames.
+- Status changes and comments are idempotent; even if platform writeback and local
+  writeback arrive in different orders, status will not flap.
+- The platform side should continue to consume the runtime's `progress` /
+  `result.acceptance`. Local metadata only provides a readable short status for the
+  current Multica upper layer and does not replace the platform data source.
