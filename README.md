@@ -60,6 +60,9 @@ The runtime contract includes:
 - narrowly forwards only Multica's server-minted `mat_` task token into DSH's
   otherwise credential-scrubbed shell, so in-task `multica` commands retain
   task attribution without exposing model-provider credentials.
+- optionally forwards `MULTICA_ISSUE_ID` from `ExecuteCommand.issue_id`, so the
+  task can write local progress and acceptance state back to its Multica issue;
+  see `docs/task-local-writeback.md`.
 
 The local `.local/` tree is ignored. It may hold an isolated DSH home and a
 development launcher, but neither belongs in source control.

@@ -31,6 +31,22 @@ export interface StreamableHttpMcpServer extends McpServerBase {
 
 export type McpServerInput = StdioMcpServer | StreamableHttpMcpServer
 
+export interface TaskContractInput {
+  goal: string
+  acceptance?: string[]
+  state_file?: string
+  required_checks?: string[]
+}
+
+export interface AcceptanceCheckResult {
+  command: string
+  exit_code: number
+  passed: boolean
+  output: string
+  truncated?: boolean
+  error?: { code: string; message: string }
+}
+
 export interface ExecuteCommand {
   v: typeof PROTOCOL_VERSION
   type: 'execute'
@@ -38,9 +54,11 @@ export interface ExecuteCommand {
   cwd: string
   prompt: string
   resume_session_id?: string
+  issue_id?: string
   model?: ModelSelectionInput
   reasoning_effort?: string
   mcp_servers: McpServerInput[]
+  task_contract?: TaskContractInput
 }
 
 export interface CancelCommand {
@@ -75,7 +93,11 @@ export type OutboundFrame =
       thinking: true
       usage: true
       tools: true
+      progress: true
+      acceptance: true
       mcp: ['stdio', 'streamable-http']
+      issue_id: true
+      task_contract: true
     }
   }
   | { v: typeof PROTOCOL_VERSION; type: 'probe'; runtime: 'dsh'; plugin_version: string; protocol_version: number }
@@ -83,6 +105,14 @@ export type OutboundFrame =
   | { v: typeof PROTOCOL_VERSION; type: 'session'; request_id: string; session_id: string; resumed: boolean }
   | { v: typeof PROTOCOL_VERSION; type: 'text'; request_id: string; content: string }
   | { v: typeof PROTOCOL_VERSION; type: 'thinking'; request_id: string; content: string }
+  | {
+    v: typeof PROTOCOL_VERSION
+    type: 'progress'
+    request_id: string
+    phase: string
+    message?: string
+    data?: Record<string, unknown>
+  }
   | { v: typeof PROTOCOL_VERSION; type: 'tool_call'; request_id: string; call_id: string; name: string; arguments: string }
   | {
     v: typeof PROTOCOL_VERSION
@@ -116,6 +146,7 @@ export type OutboundFrame =
     stop_reason?: string
     resume_rejected: boolean
     error?: { code: string; message: string }
+    acceptance?: { passed: boolean; checks: AcceptanceCheckResult[] }
   }
   | { v: typeof PROTOCOL_VERSION; type: 'protocol_error'; code: string; message: string }
 
@@ -146,6 +177,14 @@ function optionalString(value: unknown, field: string): string | undefined {
 
 function stringArray(value: unknown, field: string): string[] {
   if (value === undefined) return []
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    throw new Error(`${field} must be an array of strings`)
+  }
+  return [...value]
+}
+
+function optionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
     throw new Error(`${field} must be an array of strings`)
   }
@@ -227,6 +266,22 @@ function parseMcpServers(value: unknown): McpServerInput[] {
   return servers
 }
 
+function parseTaskContract(value: unknown): TaskContractInput | undefined {
+  if (value === undefined || value === null) return undefined
+  const contract = assertRecord(value, 'task_contract')
+  assertOnlyKeys(contract, ['goal', 'acceptance', 'state_file', 'required_checks'], 'task_contract')
+  const acceptance = optionalStringArray(contract.acceptance, 'task_contract.acceptance')
+  const requiredChecks = optionalStringArray(contract.required_checks, 'task_contract.required_checks')
+  return {
+    goal: requiredString(contract.goal, 'task_contract.goal'),
+    ...acceptance === undefined ? {} : { acceptance },
+    ...optionalString(contract.state_file, 'task_contract.state_file') === undefined
+      ? {}
+      : { state_file: optionalString(contract.state_file, 'task_contract.state_file') },
+    ...requiredChecks === undefined ? {} : { required_checks: requiredChecks },
+  }
+}
+
 export function parseInboundCommand(line: string): InboundCommand {
   if (Buffer.byteLength(line) > MAX_COMMAND_BYTES) throw new Error('protocol command exceeds 8 MiB')
   let parsed: unknown
@@ -249,7 +304,7 @@ export function parseInboundCommand(line: string): InboundCommand {
   if (type === 'execute') {
     assertOnlyKeys(
       command,
-      ['v', 'type', 'request_id', 'cwd', 'prompt', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers'],
+      ['v', 'type', 'request_id', 'cwd', 'prompt', 'resume_session_id', 'issue_id', 'model', 'reasoning_effort', 'mcp_servers', 'task_contract'],
       'execute command',
     )
     return {
@@ -261,11 +316,17 @@ export function parseInboundCommand(line: string): InboundCommand {
       ...optionalString(command.resume_session_id, 'execute.resume_session_id') === undefined
         ? {}
         : { resume_session_id: optionalString(command.resume_session_id, 'execute.resume_session_id') },
+      ...optionalString(command.issue_id, 'execute.issue_id') === undefined
+        ? {}
+        : { issue_id: optionalString(command.issue_id, 'execute.issue_id') },
       ...parseModel(command.model) === undefined ? {} : { model: parseModel(command.model) },
       ...optionalString(command.reasoning_effort, 'execute.reasoning_effort') === undefined
         ? {}
         : { reasoning_effort: optionalString(command.reasoning_effort, 'execute.reasoning_effort') },
       mcp_servers: parseMcpServers(command.mcp_servers),
+      ...parseTaskContract(command.task_contract) === undefined
+        ? {}
+        : { task_contract: parseTaskContract(command.task_contract) },
     }
   }
   throw new Error(`unsupported protocol command type: ${type}`)
