@@ -96,6 +96,8 @@ export type OutboundFrame =
       progress: true
       acceptance: true
       mcp: ['stdio', 'streamable-http']
+      issue_id: true
+      task_contract: true
     }
   }
   | { v: typeof PROTOCOL_VERSION; type: 'probe'; runtime: 'dsh'; plugin_version: string; protocol_version: number }

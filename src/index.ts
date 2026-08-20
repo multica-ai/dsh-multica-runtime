@@ -618,6 +618,8 @@ async function stdio(ctx: Context): Promise<number> {
       progress: true,
       acceptance: true,
       mcp: ['stdio', 'streamable-http'],
+      issue_id: true,
+      task_contract: true,
     },
   })
   try {
