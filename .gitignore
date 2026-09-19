@@ -2,6 +2,8 @@ node_modules/
 dist/
 coverage/
 .local/
+.pnpm-store/
+.reasonix/
 .DS_Store
 .env
 .env.*
@@ -9,3 +11,8 @@ coverage/
 *.log
 *.key
 *.pem
+
+# Dependency locking is intentionally dropped: this runtime tracks the current
+# DSH release channel instead of a pinned resolution, so a lockfile must never
+# be committed.
+pnpm-lock.yaml
