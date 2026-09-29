@@ -6,4 +6,4 @@
  * daemon can tell which channel a profile is running. Keep it in step with the
  * `version` field in package.json.
  */
-export const PLUGIN_VERSION = '0.1.0-rc.2'
+export const PLUGIN_VERSION = '0.2.0-rc.1'

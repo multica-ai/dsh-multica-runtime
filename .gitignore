@@ -14,5 +14,7 @@ coverage/
 
 # Dependency locking is intentionally dropped: this runtime tracks the current
 # DSH release channel instead of a pinned resolution, so a lockfile must never
-# be committed.
+# be committed. pnpm also auto-maintains its supply-chain minimumReleaseAgeExclude
+# in pnpm-workspace.yaml; that resolution state must not be committed either.
 pnpm-lock.yaml
+pnpm-workspace.yaml

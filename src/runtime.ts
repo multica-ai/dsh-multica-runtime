@@ -191,8 +191,6 @@ function renderBlock(block: ContentBlock): string {
       return `[image attachment ${block.attachment.attachmentId}]`
     case 'tool-call':
       return `[tool call ${block.name}: ${block.arguments}]`
-    case 'tool-result':
-      return block.content.map(renderBlock).join('')
     default:
       return JSON.stringify(block)
   }
@@ -246,16 +244,16 @@ function observeSessionEvent(active: ActiveRun, session: Agent['session'], event
     return
   }
   if (event.type === 'tool/result') {
-    const result = event.data.message.content[0]
-    const rendered = truncateUtf8(result.content.map(renderBlock).join(''))
+    const message = event.data.message
+    const rendered = truncateUtf8(message.content.map(renderBlock).join(''))
     writeFrame({
       v: PROTOCOL_VERSION,
       type: 'tool_result',
       request_id: requestId,
-      call_id: String(result.toolCallId),
-      name: active.toolNames.get(String(result.toolCallId)) ?? 'unknown',
+      call_id: String(message.toolCallId),
+      name: active.toolNames.get(String(message.toolCallId)) ?? 'unknown',
       output: rendered.value,
-      is_error: result.isError === true,
+      is_error: message.isError === true,
       ...rendered.truncated ? { truncated: true } : {},
     })
     return
