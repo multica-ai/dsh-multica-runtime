@@ -17,9 +17,13 @@ a versioned JSONL protocol over stdio and composes over
 
 ## Local development
 
-The DSH packages used by this plugin are public npm packages. This checkout is
-currently validated against `@deepseek-ai/dsh@0.1.0-rc.6` and its matching
-`@deepseek-ai/dsh-*` package family.
+For a complete Linux/macOS installation walkthrough, see the
+[Linux/macOS installation guide](docs/install-agent-runtime.md).
+
+The DSH packages used by this plugin are public npm packages. This checkout
+deliberately pins no resolved dependency graph: the `@deepseek-ai/dsh-*`
+packages float on caret ranges and no lockfile is committed, so a fresh install
+resolves the newest release on the same channel DSH itself is installed from.
 
 ```bash
 pnpm install
@@ -57,9 +61,39 @@ The runtime contract includes:
   streamable-HTTP clients;
 - per-runtime/agent session roots supplied by the Multica daemon;
 - headless one-shot approvals, with no interactive question surface.
-- narrowly forwards only Multica's server-minted `mat_` task token into DSH's
-  otherwise credential-scrubbed shell, so in-task `multica` commands retain
-  task attribution without exposing model-provider credentials.
+- narrowly forwards only Multica's server-minted `mat_` task token — plus any
+  variable names an agent explicitly lists in `FORWARD_ENV_NAMES` — into
+  DSH's otherwise credential-scrubbed shell, so in-task `multica` commands
+  retain task attribution and explicitly-authorized agent credentials (such as
+  a third-party skill's `WEKNORA_API_KEY`) reach the shell without exposing
+  model-provider credentials.
+
+## Forwarding agent credentials to the shell
+
+DSH scrubs any ambient environment variable whose name contains `KEY`,
+`PASSWORD`, `SECRET`, or `TOKEN` from agent-spawned subprocesses. A
+credential-shaped variable configured on a Multica agent — for example a
+third-party skill's `WEKNORA_API_KEY` — therefore never reaches the shell by
+default.
+
+To forward such variables, add an agent environment variable listing their
+names, comma-separated:
+
+```bash
+FORWARD_ENV_NAMES=WEKNORA_API_KEY
+```
+
+The control variable name must not start with `MULTICA_` or `DSH_`: the Multica
+daemon drops `MULTICA_`-prefixed custom env, and DSH reserves the `DSH_`
+namespace for its own use.
+
+Entries are trimmed and deduplicated. List only the credential-shaped names the
+agent actually needs:
+
+- names without a sensitive token (`WEKNORA_BASE_URL`, `PATH`, ...) already
+  pass through — no need to list them;
+- model-provider credentials (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, ...) must
+  never be listed, or they would leak into the agent's shell.
 
 The local `.local/` tree is ignored. It may hold an isolated DSH home and a
 development launcher, but neither belongs in source control.
