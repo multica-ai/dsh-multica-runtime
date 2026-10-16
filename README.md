@@ -18,14 +18,18 @@ a versioned JSONL protocol over stdio and composes over
 ## Local development
 
 The DSH packages used by this plugin are public npm packages. This checkout is
-currently validated against `@deepseek-ai/dsh@0.1.0-rc.6` and its matching
-`@deepseek-ai/dsh-*` package family.
+currently validated against `@deepseek-ai/dsh@0.2.0-rc.2` and its matching
+`@deepseek-ai/dsh-*` package family. The supported peer range targets DSH 0.2;
+DSH 0.1 uses a different tool-result message format.
 
 ```bash
 pnpm install
 pnpm check
-pnpm build
 ```
+
+The test suite includes isolated, offline launcher checks for profile loading,
+model discovery, and the stdio handshake. It never reads the user's DSH home
+or contacts a model endpoint. `pnpm test` builds the bundle before these checks.
 
 Install the local bundle into a DSH profile after building it:
 

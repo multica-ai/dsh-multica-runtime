@@ -10,7 +10,7 @@ import {
   type ModelSelection,
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
@@ -24,13 +24,13 @@ import {
   normalizeMcpServerName,
   parseInboundCommand,
   PROTOCOL_VERSION,
-  truncateUtf8,
   type ExecuteCommand,
   type McpServerInput,
   type OutboundFrame,
   type RuntimeModelFrame,
 } from './protocol.js'
 import { installMulticaTerminalEnvironment } from './environment.js'
+import { toolResultFrame } from './tool-result.js'
 
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
@@ -186,22 +186,6 @@ async function sameDirectory(left: string | undefined, right: string): Promise<b
   }
 }
 
-function renderBlock(block: ContentBlock): string {
-  switch (block.type) {
-    case 'text':
-    case 'reasoning':
-      return block.text
-    case 'image':
-      return `[image attachment ${block.attachment.attachmentId}]`
-    case 'tool-call':
-      return `[tool call ${block.name}: ${block.arguments}]`
-    case 'tool-result':
-      return block.content.map(renderBlock).join('')
-    default:
-      return JSON.stringify(block)
-  }
-}
-
 function observeSessionEvent(active: ActiveRun, session: Agent['session'], event: SessionEvent): void {
   if (active.agent?.session !== session || event.seq < active.firstSeq) return
   const requestId = active.command.request_id
@@ -250,18 +234,7 @@ function observeSessionEvent(active: ActiveRun, session: Agent['session'], event
     return
   }
   if (event.type === 'tool/result') {
-    const result = event.data.message.content[0]
-    const rendered = truncateUtf8(result.content.map(renderBlock).join(''))
-    writeFrame({
-      v: PROTOCOL_VERSION,
-      type: 'tool_result',
-      request_id: requestId,
-      call_id: String(result.toolCallId),
-      name: active.toolNames.get(String(result.toolCallId)) ?? 'unknown',
-      output: rendered.value,
-      is_error: result.isError === true,
-      ...rendered.truncated ? { truncated: true } : {},
-    })
+    writeFrame(toolResultFrame(requestId, event.data.message, active.toolNames))
     return
   }
   if (event.type === 'turn/end') active.endReason = event.data.reason
