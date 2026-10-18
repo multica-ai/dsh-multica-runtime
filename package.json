@@ -1,6 +1,6 @@
 {
   "name": "@multica-ai/dsh-runtime",
-  "version": "0.1.0-private.1",
+  "version": "0.1.0-private.2",
   "private": true,
   "description": "Private DeepSeek Harness runtime bridge for Multica",
   "repository": {
@@ -26,11 +26,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "test": "pnpm build && vitest run",
+    "check": "pnpm typecheck && pnpm test"
   },
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
   },
   "dsh": {
     "bundle": {
@@ -38,16 +39,16 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/cordis-plugin-loader": "^1.0.2",
-    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-cmdline": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-mcp-client": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-subprocess": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6"
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/cordis-plugin-loader": "~1.0.6",
+    "@deepseek-ai/dsh-agent": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-cmdline": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-mcp-client": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-subprocess": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-user-approval": "^0.2.1-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": { "optional": true },
@@ -62,16 +63,18 @@
     "@deepseek-ai/dsh-user-approval": { "optional": true }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/cordis-plugin-loader": "^1.0.2",
-    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-cmdline": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-mcp-client": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-subprocess": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6",
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "@deepseek-ai/cordis-plugin-loader": "~1.0.6",
+    "@deepseek-ai/dsh-agent": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-cmdline": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-mcp-client": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-mcp-resources": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-subprocess": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-user-approval": "^0.2.1-rc.2",
     "@types/node": "^22.20.0",
     "commander": "^15.0.0",
     "typescript": "6.0.3",

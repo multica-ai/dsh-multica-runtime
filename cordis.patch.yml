@@ -5,7 +5,7 @@
 - id: hmr
   disabled: true
 
-- id: telemetry-otel
+- id: session-telemetry-otel
   disabled: true
 
 - id: session-persistence-jsonl
@@ -14,9 +14,12 @@
 
 - id: system-prompt
   config:
-    persona: >-
+    # The working directory is required user context supplied by
+    # dsh-working-directory (mounted by dsh-base). Do not re-add {{cwd}}: it is
+    # no longer a prompt variable and would throw during prompt assembly.
+    personaPrefix: >-
       You are a coding agent powered by the {{model}} model and running for Multica.
-      Your working directory is {{cwd}}. This runtime is headless: do not call
+      This runtime is headless: do not call
       ask_user_question. When a genuinely user-owned decision blocks progress,
       explain the decision and available options in your final response.
 

@@ -10,7 +10,7 @@ import {
   type ModelSelection,
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, type ContentBlock, type ToolResultMessage } from '@deepseek-ai/dsh-llm'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
@@ -35,7 +35,7 @@ import { installMulticaTerminalEnvironment } from './environment.js'
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
 
-const PLUGIN_VERSION = '0.1.0-private.1'
+const PLUGIN_VERSION = '0.1.0-private.2'
 
 interface ActiveRun {
   command: ExecuteCommand
@@ -195,10 +195,24 @@ function renderBlock(block: ContentBlock): string {
       return `[image attachment ${block.attachment.attachmentId}]`
     case 'tool-call':
       return `[tool call ${block.name}: ${block.arguments}]`
-    case 'tool-result':
-      return block.content.map(renderBlock).join('')
     default:
       return JSON.stringify(block)
+  }
+}
+
+/** Build the Multica tool_result payload from DSH's tool-role result message. */
+export function toolResultPayload(
+  message: ToolResultMessage,
+  toolNames: ReadonlyMap<string, string>,
+): { call_id: string; name: string; output: string; is_error: boolean; truncated?: true } {
+  const callId = String(message.toolCallId)
+  const rendered = truncateUtf8(message.content.map(renderBlock).join(''))
+  return {
+    call_id: callId,
+    name: toolNames.get(callId) ?? 'unknown',
+    output: rendered.value,
+    is_error: message.isError === true,
+    ...rendered.truncated ? { truncated: true } : {},
   }
 }
 
@@ -250,18 +264,8 @@ function observeSessionEvent(active: ActiveRun, session: Agent['session'], event
     return
   }
   if (event.type === 'tool/result') {
-    const result = event.data.message.content[0]
-    const rendered = truncateUtf8(result.content.map(renderBlock).join(''))
-    writeFrame({
-      v: PROTOCOL_VERSION,
-      type: 'tool_result',
-      request_id: requestId,
-      call_id: String(result.toolCallId),
-      name: active.toolNames.get(String(result.toolCallId)) ?? 'unknown',
-      output: rendered.value,
-      is_error: result.isError === true,
-      ...rendered.truncated ? { truncated: true } : {},
-    })
+    const payload = toolResultPayload(event.data.message, active.toolNames)
+    writeFrame({ v: PROTOCOL_VERSION, type: 'tool_result', request_id: requestId, ...payload })
     return
   }
   if (event.type === 'turn/end') active.endReason = event.data.reason
@@ -269,8 +273,14 @@ function observeSessionEvent(active: ActiveRun, session: Agent['session'], event
 
 async function drainContinuableSubagents(ctx: Context, agent: Agent): Promise<void> {
   const subagents = ctx.get('subagents') as {
+    drainDescendants?(parents: readonly Agent[]): Promise<void>
     drainContinuableDescendants?(parents: readonly Agent[]): Promise<void>
   } | undefined
+  // Call through the service: drainDescendants reads its own manager state.
+  if (subagents?.drainDescendants !== undefined) {
+    await subagents.drainDescendants([agent])
+    return
+  }
   await subagents?.drainContinuableDescendants?.([agent])
 }
 
@@ -292,6 +302,18 @@ function resultFromReason(active: ActiveRun): Omit<Extract<OutboundFrame, { type
       stop_reason: reason.kind,
       resume_rejected: false,
       error: { code: reason.error.code, message: reason.error.message },
+    }
+  }
+  if (reason?.kind === 'blocked' || reason?.kind === 'interrupted') {
+    return {
+      status: 'failed',
+      output: active.lastText,
+      stop_reason: reason.kind,
+      resume_rejected: false,
+      error: {
+        code: reason.kind === 'blocked' ? 'DSH_TURN_BLOCKED' : 'DSH_TURN_INTERRUPTED',
+        message: `DSH turn ended with ${reason.kind}`,
+      },
     }
   }
   const stopReason = reason?.kind ?? 'no-turn-result'
@@ -400,6 +422,8 @@ async function execute(ctx: Context, active: ActiveRun): Promise<number> {
         writeDiagnostic(`cleanup failed: ${errorMessage(cleanupError)}`)
       }
     }
+    // Keep the stack on stderr; the protocol result stays concise.
+    writeDiagnostic(error instanceof Error ? (error.stack ?? error.message) : String(error))
     const resumeRejected = error instanceof ResumeRejectedError
     const cause = error instanceof Error && error.cause !== undefined ? `: ${errorMessage(error.cause)}` : ''
     writeFrame({
