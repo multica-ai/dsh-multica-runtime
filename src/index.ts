@@ -144,10 +144,19 @@ async function resolveSelection(ctx: Context, command: ExecuteCommand): Promise<
     ? defaultModel.currentSelection()
     : { provider: command.model.provider, model: command.model.id }
   const info = await llm.resolveModelInfo(base.provider, base.model)
-  const effort = command.reasoning_effort ?? command.model?.reasoning_effort
-  if (effort !== undefined && !info.reasoning?.efforts.some(item => String(item.id) === effort)) {
-    throw new Error(`reasoning effort ${effort} is not supported by ${base.provider}/${base.model}`)
+  const explicit = command.reasoning_effort ?? command.model?.reasoning_effort
+  const supports = (value: string): boolean =>
+    info.reasoning?.efforts.some(item => String(item.id) === value) === true
+  if (explicit !== undefined && !supports(explicit)) {
+    throw new Error(`reasoning effort ${explicit} is not supported by ${base.provider}/${base.model}`)
   }
+  // A profile-level default effort applies only when Multica neither pins a
+  // model nor an effort. An unsupported default degrades to the adapter default
+  // instead of failing the run; an explicit request still fails above.
+  const inherited = explicit === undefined && command.model === undefined
+    ? base.reasoningEffort
+    : undefined
+  const effort = explicit ?? (inherited !== undefined && supports(String(inherited)) ? String(inherited) : undefined)
   return {
     provider: base.provider,
     model: base.model,
