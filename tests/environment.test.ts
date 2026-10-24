@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { existsSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
-import { exemptTaskTokenOn, installMulticaTerminalEnvironment } from '../src/environment.js'
+import { exemptTaskTokenOn, installMulticaTerminalEnvironment, resolveScrubModule } from '../src/environment.js'
 
 /** DSH's own credential-name matcher, cloned so a test never patches the real one. */
 function scrubPattern(): RegExp {
@@ -109,4 +110,34 @@ describe('installMulticaTerminalEnvironment', () => {
     expect(report).toEqual({ patched: 1, forwarded: true })
     ctx.dispose()
   })
+})
+
+describe('resolveScrubModule', () => {
+  // The workspace checkout this bridge runs against: the launcher resolves
+  // dsh-subprocess only through dsh-base → dsh-subprocess-local. Skipped on
+  // machines without that checkout so the suite stays portable.
+  const LAUNCHER = '/home/llm/deepseek-harness/apps/cli/lib/bin.js'
+
+  it.runIf(existsSync(LAUNCHER))(
+    'reaches the same dsh-subprocess instance the shell tools spawn through',
+    async () => {
+      vi.stubEnv('MULTICA_TOKEN', 'mat_task-token')
+      vi.stubEnv('DEEPSEEK_API_KEY', 'provider-secret')
+
+      const host = await resolveScrubModule(LAUNCHER)
+      expect(host).toBeDefined()
+
+      // The MUL-6186 regression in this deployment: patching the bridge's own
+      // npm copy left the workspace copy the bash tool scrubs through intact,
+      // so MULTICA_TOKEN never reached in-task `multica` calls. Patching the
+      // resolved launcher instance must make *its* scrub keep the task token.
+      expect(host!.scrubbedParentEnv().MULTICA_TOKEN).toBeUndefined()
+      const { dispose } = exemptTaskTokenOn([host!.SENSITIVE_ENV_PATTERN])
+      const env = host!.scrubbedParentEnv()
+      expect(env.MULTICA_TOKEN).toBe('mat_task-token')
+      expect(env.DEEPSEEK_API_KEY).toBeUndefined()
+      dispose()
+      expect(host!.scrubbedParentEnv().MULTICA_TOKEN).toBeUndefined()
+    },
+  )
 })

@@ -81,20 +81,52 @@ export function exemptTaskTokenOn(
  * Resolve the dsh-subprocess instance the DSH launcher itself loaded, so the
  * exemption reaches the scrub that actually runs no matter how this plugin was
  * installed.
+ *
+ * The launcher usually cannot resolve `@deepseek-ai/dsh-subprocess` directly:
+ * the shell/subprocess packages that call `scrubbedParentEnv()` live inside
+ * the DSH base bundle, and each deployment links them differently (npm
+ * installs, pnpm workspaces, a git checkout with per-package node_modules
+ * links). Resolution therefore walks the chain of packages the launcher *can*
+ * see — `dsh-base`, then the local subprocess provider its bundle links — and
+ * imports the same `dsh-subprocess` file the shell tools resolve, so the
+ * module cache returns the very instance that scrubs tool environments.
  * @param entrypoint - the launcher script, normally `process.argv[1]`.
  * @returns the launcher's module, or undefined when it cannot be reached.
  */
-async function hostScrubModule(entrypoint: string | undefined): Promise<ScrubModule | undefined> {
-  if (entrypoint === undefined || entrypoint.trim() === '') return undefined
+export async function resolveScrubModule(entrypoint: string): Promise<ScrubModule | undefined> {
   try {
     // realpathSync is load-bearing: `dsh` is normally a bin symlink, Node
     // leaves argv[1] as the link, and a link in a bare bin directory resolves
     // no node_modules chain of its own.
-    const specifier = createRequire(realpathSync(entrypoint)).resolve('@deepseek-ai/dsh-subprocess')
+    const requireFromLauncher = createRequire(realpathSync(entrypoint))
+
+    // 1. direct resolution — works when the launcher's own node_modules chain
+    //    reaches dsh-subprocess (npm-installed DSH).
+    let specifier: string | undefined
+    try {
+      specifier = requireFromLauncher.resolve('@deepseek-ai/dsh-subprocess')
+    } catch {
+      // 2. workspace deployments: the launcher sees dsh-base, whose bundle
+      //    links dsh-subprocess-local, which imports dsh-subprocess. Resolving
+      //    through those links lands on the same file the shell tools load.
+      const requireFromBase = createRequire(realpathSync(requireFromLauncher.resolve('@deepseek-ai/dsh-base')))
+      try {
+        specifier = requireFromBase.resolve('@deepseek-ai/dsh-subprocess')
+      } catch {
+        const requireFromLocal = createRequire(realpathSync(requireFromBase.resolve('@deepseek-ai/dsh-subprocess-local')))
+        specifier = requireFromLocal.resolve('@deepseek-ai/dsh-subprocess')
+      }
+    }
+    if (specifier === undefined) return undefined
     return await import(pathToFileURL(specifier).href) as ScrubModule
   } catch {
     return undefined
   }
+}
+
+async function hostScrubModule(entrypoint: string | undefined): Promise<ScrubModule | undefined> {
+  if (entrypoint === undefined || entrypoint.trim() === '') return undefined
+  return resolveScrubModule(entrypoint)
 }
 
 /**
