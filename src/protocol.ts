@@ -49,7 +49,7 @@ export interface CancelCommand {
   request_id: string
 }
 
-export type InboundCommand = ExecuteCommand | CancelCommand
+export type InboundCommand = ExecuteCommand | CancelCommand | AnswerCommand
 
 export interface RuntimeModelFrame {
   id: string
@@ -60,6 +60,56 @@ export interface RuntimeModelFrame {
     supported_levels: Array<{ value: string; label: string; description?: string }>
     default_level?: string
   }
+}
+
+/** One selectable answer offered by an ask/plan question. */
+export interface RuntimeQuestionOption {
+  label: string
+  description?: string
+}
+
+/**
+ * Plan-review presentation intent, passed through from dsh's user-questions
+ * seam unchanged: the question IS a plan submission, `approve` names the
+ * option that approves it, and the question's `detail` carries the plan.
+ */
+export interface RuntimeQuestionIntent {
+  kind: 'plan-review'
+  approve: string
+  callId?: string
+}
+
+/** One question of an outbound `question` frame; mirrors dsh's AskUserQuestionItem. */
+export interface RuntimeQuestion {
+  id: string
+  question: string
+  detail?: string
+  header?: string
+  options?: RuntimeQuestionOption[]
+  multiSelect?: boolean
+  intent?: RuntimeQuestionIntent
+}
+
+/** One question's answer in an `answer` command. */
+export interface RuntimeAnswerItem {
+  id: string
+  selected: string[]
+  custom?: string
+}
+
+/**
+ * Resolves one parked ask. Additive at protocol v1: the daemon sends it only
+ * after the bridge's ready frame advertised the `questions` capability, and a
+ * bridge that predates it never emits a `question` frame. An answer for an
+ * unknown or already-settled question is ignored with a stderr diagnostic —
+ * a stale reply must not tear down the run.
+ */
+export interface AnswerCommand {
+  v: typeof PROTOCOL_VERSION
+  type: 'answer'
+  request_id: string
+  call_id: string
+  answers: RuntimeAnswerItem[]
 }
 
 export type OutboundFrame =
@@ -75,6 +125,7 @@ export type OutboundFrame =
       thinking: true
       usage: true
       tools: true
+      questions: true
       mcp: ['stdio', 'streamable-http']
     }
   }
@@ -84,6 +135,7 @@ export type OutboundFrame =
   | { v: typeof PROTOCOL_VERSION; type: 'text'; request_id: string; content: string }
   | { v: typeof PROTOCOL_VERSION; type: 'thinking'; request_id: string; content: string }
   | { v: typeof PROTOCOL_VERSION; type: 'tool_call'; request_id: string; call_id: string; name: string; arguments: string }
+  | { v: typeof PROTOCOL_VERSION; type: 'question'; request_id: string; call_id: string; questions: RuntimeQuestion[] }
   | {
     v: typeof PROTOCOL_VERSION
     type: 'tool_result'
@@ -244,6 +296,29 @@ export function parseInboundCommand(line: string): InboundCommand {
       v: PROTOCOL_VERSION,
       type,
       request_id: requiredString(command.request_id, 'cancel.request_id'),
+    }
+  }
+  if (type === 'answer') {
+    assertOnlyKeys(command, ['v', 'type', 'request_id', 'call_id', 'answers'], 'answer command')
+    const rawAnswers = command.answers
+    if (!Array.isArray(rawAnswers)) throw new Error('answer.answers must be an array')
+    const answers: RuntimeAnswerItem[] = rawAnswers.map((entry, index) => {
+      const field = `answer.answers[${index}]`
+      const item = assertRecord(entry, field)
+      assertOnlyKeys(item, ['id', 'selected', 'custom'], field)
+      const custom = optionalString(item.custom, `${field}.custom`)
+      return {
+        id: requiredString(item.id, `${field}.id`),
+        selected: stringArray(item.selected, `${field}.selected`),
+        ...custom === undefined ? {} : { custom },
+      }
+    })
+    return {
+      v: PROTOCOL_VERSION,
+      type,
+      request_id: requiredString(command.request_id, 'answer.request_id'),
+      call_id: requiredString(command.call_id, 'answer.call_id'),
+      answers,
     }
   }
   if (type === 'execute') {

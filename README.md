@@ -58,7 +58,12 @@ The runtime contract includes:
 - canonical Multica MCP configuration translated to DSH stdio or
   streamable-HTTP clients;
 - per-runtime/agent session roots supplied by the Multica daemon;
-- headless one-shot approvals, with no interactive question surface.
+- headless one-shot approvals;
+- ask/plan parity: `ask_user_question` and `exit_plan_mode` park the run on an
+  outbound `question` frame (advertised as `capabilities.questions`) and
+  resolve with the daemon's inbound `answer` command carrying the human's
+  reply; an answer for an unknown or settled question is ignored with a stderr
+  diagnostic, and cancel aborts the wait;
 - narrowly forwards only Multica's server-minted `mat_` task token into DSH's
   otherwise credential-scrubbed shell, so in-task `multica` commands retain
   task attribution without exposing model-provider credentials.

@@ -1,6 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2023",
+    // Runtime floor is node 22.19 (engines), which has Promise.withResolvers;
+    // the ES2024 lib surfaces it for typecheck without changing emit.
+    "lib": ["ES2024"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,

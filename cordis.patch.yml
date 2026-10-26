@@ -18,11 +18,18 @@
   config:
     personaPrefix: >-
       You are a coding agent powered by the {{model}} model and running for Multica.
-      This runtime is headless: do not call
-      ask_user_question. When a genuinely user-owned decision blocks progress,
-      explain the decision and available options in your final response.
+      When a genuinely user-owned decision blocks progress, call
+      ask_user_question with the decision and its options; the question reaches
+      the user and the run resumes with their answer, which may take a while.
+      Reserve it for decisions the user must own — never for choices you can
+      make yourself.
 
 - insert:
+    # Ask/plan parity (M-109): the blocking ask tool paired with the bridge's
+    # user-questions answerer. Plan review rides the same seam through
+    # exit_plan_mode (plan-mode plugin, shipped by DSH itself).
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
     # DSH's launcher treats this reserved row id as a one-shot surface. The
     # bridge owns process lifetime through appExit, so profile HMR/watchers
     # must never race its shutdown after a result is emitted.

@@ -93,6 +93,52 @@ describe('parseInboundCommand', () => {
       mcp_servers: [{ name: 'legacy', transport: 'sse', url: 'https://example.test/sse' }],
     }))).toThrow('stdio or streamable-http')
   })
+
+  it('parses an answer command and rejects malformed answers', () => {
+    expect(parseInboundCommand(JSON.stringify({
+      v: 1,
+      type: 'answer',
+      request_id: 'request-1',
+      call_id: 'q-1',
+      answers: [
+        { id: 'plan', selected: ['Approve'] },
+        { id: 'mode', selected: [], custom: 'use staging' },
+      ],
+    }))).toEqual({
+      v: PROTOCOL_VERSION,
+      type: 'answer',
+      request_id: 'request-1',
+      call_id: 'q-1',
+      answers: [
+        { id: 'plan', selected: ['Approve'] },
+        { id: 'mode', selected: [], custom: 'use staging' },
+      ],
+    })
+
+    expect(() => parseInboundCommand(JSON.stringify({
+      v: 1,
+      type: 'answer',
+      request_id: 'request-1',
+      call_id: 'q-1',
+    }))).toThrow('must be an array')
+
+    expect(() => parseInboundCommand(JSON.stringify({
+      v: 1,
+      type: 'answer',
+      request_id: 'request-1',
+      call_id: 'q-1',
+      answers: [],
+      stale: true,
+    }))).toThrow('unsupported field')
+
+    expect(() => parseInboundCommand(JSON.stringify({
+      v: 1,
+      type: 'answer',
+      request_id: 'request-1',
+      call_id: 'q-1',
+      answers: [{ id: 'plan', selected: 'Approve' }],
+    }))).toThrow('array of strings')
+  })
 })
 
 describe('wire helpers', () => {

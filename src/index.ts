@@ -19,16 +19,21 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
+import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
 import {
   encodeFrame,
   normalizeMcpServerName,
   parseInboundCommand,
   PROTOCOL_VERSION,
   truncateUtf8,
+  type AnswerCommand,
   type ExecuteCommand,
   type McpServerInput,
   type OutboundFrame,
+  type RuntimeAnswerItem,
   type RuntimeModelFrame,
+  type RuntimeQuestion,
+  type RuntimeQuestionIntent,
 } from './protocol.js'
 import { installMulticaTerminalEnvironment } from './environment.js'
 import { settleCancelled as settleCancelledAgent, waitForQuiescence, type SubagentLifecycle } from './lifecycle.js'
@@ -36,7 +41,7 @@ import { settleCancelled as settleCancelledAgent, waitForQuiescence, type Subage
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
 
-const PLUGIN_VERSION = '0.2.0-private.1'
+const PLUGIN_VERSION = '0.2.0-private.2'
 
 interface ActiveRun {
   command: ExecuteCommand
@@ -48,6 +53,12 @@ interface ActiveRun {
   lastText: string
   endReason?: TurnEndReason
   toolNames: Map<string, string>
+  /**
+   * The one ask this run is parked on, if any. The `user-questions/request`
+   * answerer sets it after emitting the `question` frame; the stdin handler
+   * settles it from the daemon's `answer` command, and cancel rejects it.
+   */
+  pendingQuestion?: { callId: string; resolve: (answers: RuntimeAnswerItem[]) => void; reject: (error: Error) => void }
 }
 
 class ResumeRejectedError extends Error {
@@ -55,6 +66,55 @@ class ResumeRejectedError extends Error {
     super(message, options)
     this.name = 'ResumeRejectedError'
   }
+}
+
+/**
+ * Structural view of one question of a user-questions request. dsh's
+ * AskUserQuestionItem satisfies it, and the mapping copies declared fields
+ * only, so a field a future dsh adds never reaches the wire by accident.
+ */
+export interface WireQuestionInput {
+  id: string
+  question: string
+  detail?: string
+  header?: string
+  options?: Array<{ label: string; description?: string }>
+  multiSelect?: boolean
+  intent?: RuntimeQuestionIntent
+}
+
+/** Maps request questions onto the `question` frame's wire shape. */
+export function mapQuestionsForWire(questions: readonly WireQuestionInput[]): RuntimeQuestion[] {
+  return questions.map(question => ({
+    id: question.id,
+    question: question.question,
+    ...question.detail === undefined ? {} : { detail: question.detail },
+    ...question.header === undefined ? {} : { header: question.header },
+    ...question.options === undefined
+      ? {}
+      : {
+          options: question.options.map(option => ({
+            label: option.label,
+            ...option.description === undefined ? {} : { description: option.description },
+          })),
+        },
+    ...question.multiSelect === undefined ? {} : { multiSelect: question.multiSelect },
+    ...question.intent === undefined ? {} : { intent: question.intent },
+  }))
+}
+
+/**
+ * Settles the run's parked ask from an inbound `answer` command. Returns
+ * false when the call id matches no open question — a stale or duplicate
+ * answer is ignored rather than failing the run.
+ */
+export function settlePendingQuestion(
+  pending: { callId: string; resolve: (answers: RuntimeAnswerItem[]) => void } | undefined,
+  command: Pick<AnswerCommand, 'call_id' | 'answers'>,
+): boolean {
+  if (pending === undefined || pending.callId !== command.call_id) return false
+  pending.resolve(command.answers)
+  return true
 }
 
 function errorMessage(error: unknown): string {
@@ -341,6 +401,37 @@ async function createOrResumeAgent(
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
       return Promise.resolve<ApprovalOutcome>('allowed-once').catch(() => next())
     })
+    // Ask/plan parity (M-109): claim every user-questions request — the
+    // ask_user_question tool and exit_plan_mode's plan review both arrive
+    // here — surface it on the stdio protocol, and resolve it with the
+    // daemon's `answer` command carrying the human's reply.
+    agentCtx.on('user-questions/request', (request, next) => {
+      if (active.cancelRequested || request.signal?.aborted) return next()
+      const callId = request.wait?.callId ?? `q-${randomUUID()}`
+      writeFrame({
+        v: PROTOCOL_VERSION,
+        type: 'question',
+        request_id: active.command.request_id,
+        call_id: callId,
+        questions: mapQuestionsForWire(request.questions),
+      })
+      const { promise, resolve, reject } = Promise.withResolvers<AskUserQuestionAnswer>()
+      const onAbort = (): void => {
+        if (active.pendingQuestion?.callId === callId) active.pendingQuestion = undefined
+        reject(new Error('the ask was cancelled before the human answered'))
+      }
+      request.signal?.addEventListener('abort', onAbort, { once: true })
+      active.pendingQuestion = {
+        callId,
+        reject,
+        resolve: (answers) => {
+          request.signal?.removeEventListener('abort', onAbort)
+          active.pendingQuestion = undefined
+          resolve({ answers })
+        },
+      }
+      return promise
+    })
     for (const server of active.command.mcp_servers) {
       await agentCtx.plugin(McpClient, mcpConfig(server, active.command.cwd))
     }
@@ -489,7 +580,15 @@ async function stdio(ctx: Context): Promise<number> {
       }
       const active = activeRef.current
       if (active === undefined || command.request_id !== active.command.request_id || activeRef.finished) return
+      if (command.type === 'answer') {
+        if (!settlePendingQuestion(active.pendingQuestion, command)) {
+          writeDiagnostic(`ignoring answer for unknown or settled question ${command.call_id}`)
+        }
+        return
+      }
       active.cancelRequested = true
+      active.pendingQuestion?.reject(new Error('the ask was cancelled before the human answered'))
+      active.pendingQuestion = undefined
       active.cancel.abort()
       active.agent?.cancel({ kind: 'user' })
     } catch (error: unknown) {
@@ -524,6 +623,7 @@ async function stdio(ctx: Context): Promise<number> {
       thinking: true,
       usage: true,
       tools: true,
+      questions: true,
       mcp: ['stdio', 'streamable-http'],
     },
   })
