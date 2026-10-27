@@ -10,7 +10,7 @@ import {
   type ModelSelection,
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
@@ -21,17 +21,16 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import {
   encodeFrame,
-  normalizeMcpServerName,
   parseInboundCommand,
   PROTOCOL_VERSION,
-  truncateUtf8,
   type ExecuteCommand,
-  type McpServerInput,
   type OutboundFrame,
   type RuntimeModelFrame,
 } from './protocol.js'
 import { installMulticaTerminalEnvironment } from './environment.js'
 import { settleCancelled as settleCancelledAgent, waitForQuiescence, type SubagentLifecycle } from './lifecycle.js'
+import { installMcpDiagnostics, mcpConfig } from './mcp.js'
+import { toolResultFrame } from './session-frames.js'
 
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
@@ -155,30 +154,6 @@ async function resolveSelection(ctx: Context, command: ExecuteCommand): Promise<
   }
 }
 
-function mcpConfig(server: McpServerInput, taskCwd: string): McpClient.Config {
-  const common = {
-    serverName: normalizeMcpServerName(server.name),
-    toolCallTimeoutMs: server.tool_call_timeout_ms ?? 60_000,
-    failOnStartupError: true,
-  }
-  if (server.transport === 'stdio') {
-    return {
-      ...common,
-      transport: 'stdio',
-      command: server.command,
-      args: server.args,
-      env: server.env,
-      cwd: server.cwd ?? taskCwd,
-    }
-  }
-  return {
-    ...common,
-    transport: 'streamable-http',
-    url: server.url,
-    headers: server.headers,
-  }
-}
-
 async function sameDirectory(left: string | undefined, right: string): Promise<boolean> {
   if (left === undefined) return false
   try {
@@ -186,26 +161,6 @@ async function sameDirectory(left: string | undefined, right: string): Promise<b
     return realLeft === realRight
   } catch {
     return resolve(left) === resolve(right)
-  }
-}
-
-function renderBlock(block: ContentBlock): string {
-  switch (block.type) {
-    case 'text':
-    case 'reasoning':
-      return block.text
-    case 'image':
-      return `[image attachment ${block.attachment.attachmentId}]`
-    case 'file':
-      return `[file attachment ${block.attachment.name} (${block.attachment.attachmentId})]`
-    case 'tool-call':
-      return `[tool call ${block.name}: ${block.arguments}]`
-    case 'tool-addition':
-    case 'tool-removal':
-      // Developer-message bookkeeping about the tool set, never tool output.
-      return ''
-    default:
-      return JSON.stringify(block)
   }
 }
 
@@ -257,21 +212,8 @@ function observeSessionEvent(active: ActiveRun, session: Agent['session'], event
     return
   }
   if (event.type === 'tool/result') {
-    // DSH 0.2 commits the tool result as a ToolMessage: the call id and error
-    // flag live on the message itself and `content` is the result payload.
-    const message = event.data.message
-    const callId = String(message.toolCallId)
-    const rendered = truncateUtf8(message.content.map(renderBlock).join(''))
-    writeFrame({
-      v: PROTOCOL_VERSION,
-      type: 'tool_result',
-      request_id: requestId,
-      call_id: callId,
-      name: active.toolNames.get(callId) ?? 'unknown',
-      output: rendered.value,
-      is_error: message.isError === true,
-      ...rendered.truncated ? { truncated: true } : {},
-    })
+    const result = event.data.message
+    writeFrame(toolResultFrame(requestId, result, active.toolNames.get(String(result.toolCallId)) ?? 'unknown'))
     return
   }
   if (event.type === 'turn/end') active.endReason = event.data.reason
@@ -337,6 +279,7 @@ async function createOrResumeAgent(
   const selected: ModelSelectionRef = { current: selection, assembled: undefined }
   const setup = async (agentCtx: Context): Promise<void> => {
     installModelSelection(agentCtx, selected)
+    installMcpDiagnostics(agentCtx, writeDiagnostic)
     agentCtx.on('approval/request', (_request, next) => {
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
       return Promise.resolve<ApprovalOutcome>('allowed-once').catch(() => next())
@@ -543,7 +486,6 @@ async function stdio(ctx: Context): Promise<number> {
 }
 
 async function run(ctx: Context): Promise<void> {
-  await ctx.get('loader')?.await()
   const appExit = ctx.get('appExit')
   const cmdlineArgs = ctx.get('cmdlineArgs')
   if (appExit === undefined || cmdlineArgs === undefined) {
@@ -561,11 +503,16 @@ async function run(ctx: Context): Promise<void> {
         protocol_version: PROTOCOL_VERSION,
       })
       code = 0
-    } else if (mode === 'list-models') {
-      writeFrame({ v: PROTOCOL_VERSION, type: 'models', models: await listModels(ctx) })
-      code = 0
     } else {
-      code = await stdio(ctx)
+      // Protocol discovery needs only the injected runtime services. Model
+      // discovery and execution also wait for profile providers and tools.
+      await ctx.get('loader')?.await()
+      if (mode === 'list-models') {
+        writeFrame({ v: PROTOCOL_VERSION, type: 'models', models: await listModels(ctx) })
+        code = 0
+      } else {
+        code = await stdio(ctx)
+      }
     }
   } catch (error: unknown) {
     writeDiagnostic(errorMessage(error))
