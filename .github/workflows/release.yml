@@ -1,0 +1,68 @@
+name: release
+
+# Cuts a release from a tag: builds the bundle, publishes it to npm, and
+# attaches the same tarball to the GitHub release so hosts without registry
+# access can install it directly.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # attach the tarball to the release
+  id-token: write # npm trusted publishing / provenance
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm check
+
+      # `prepack` builds dist/, so the tarball below is the same artifact the
+      # registry receives. Nothing compiled is committed to the repository.
+      - name: Pack
+        run: |
+          pnpm pack --pack-destination dist
+          echo "TARBALL=$(ls dist/*.tgz)" >> "$GITHUB_ENV"
+
+      # A package whose main points at a missing file installs cleanly and then
+      # fails to load, which is how the git-install path broke before. Fail the
+      # release instead of shipping that.
+      - name: Verify the bundle entry points are in the tarball
+        run: |
+          tar -tzf "$TARBALL" | grep -qx 'package/dist/index.js'
+          tar -tzf "$TARBALL" | grep -qx 'package/dist/index.d.ts'
+          tar -tzf "$TARBALL" | grep -qx 'package/cordis.patch.yml'
+
+      # Trusted publishing: configure this repository as a trusted publisher on
+      # the npm package instead of storing a token. Set NODE_AUTH_TOKEN from a
+      # granular NPM_TOKEN secret and drop id-token: write to fall back to a
+      # token, which publishes provenance only on public repositories either way.
+      - name: Publish to npm
+        run: npm publish "$TARBALL" --provenance --access public
+
+      - name: Attach the tarball to the GitHub release
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$TARBALL" \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag ||
+          gh release upload "$GITHUB_REF_NAME" "$TARBALL" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

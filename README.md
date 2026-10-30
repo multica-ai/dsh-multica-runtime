@@ -29,11 +29,36 @@ pnpm check
 pnpm build
 ```
 
-Install the local bundle into a DSH profile after building it:
+## Installing the bundle
+
+`dsh plugin` forwards its arguments to pnpm, so any pnpm spec works. Use the
+published package when a registry is reachable:
 
 ```bash
+dsh plugin --profile multica add @multica-ai/dsh-runtime
+```
+
+Every release also attaches the packed tarball to its GitHub release, which is
+the option for hosts that cannot reach a registry. The tarball is built by
+`prepack`, so it carries `dist/`; nothing compiled lives in the repository.
+
+```bash
+dsh plugin --profile multica add \
+  https://github.com/multica-ai/dsh-multica-runtime/releases/download/v0.2.0-private.1/multica-ai-dsh-runtime-0.2.0-private.1.tgz
+```
+
+For a local checkout, build first and point at the directory or at `pnpm pack`
+output:
+
+```bash
+pnpm install
+pnpm pack
 dsh plugin --profile multica add /absolute/path/to/multica-dsh-runtime
 ```
+
+A `github:` spec is not supported: pnpm refuses to run a git-hosted package's
+build scripts unless the profile allowlists the exact commit-pinned key, and
+this package needs its build step to produce `dist/`.
 
 The plugin supports:
 
