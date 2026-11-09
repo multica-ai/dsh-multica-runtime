@@ -4,13 +4,11 @@ import { isAbsolute, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { Context } from '@deepseek-ai/cordis'
 import {
-  installModelSelection,
   type Agent,
   type AgentHandle,
   type ModelSelection,
-  type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
@@ -30,13 +28,14 @@ import {
   type OutboundFrame,
   type RuntimeModelFrame,
 } from './protocol.js'
+import { resolveSelection, selectRunModel } from './model-selection.js'
 import { installMulticaTerminalEnvironment } from './environment.js'
 import { settleCancelled as settleCancelledAgent, waitForQuiescence, type SubagentLifecycle } from './lifecycle.js'
 
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
 
-const PLUGIN_VERSION = '0.2.0-private.1'
+const PLUGIN_VERSION = '0.2.1-private.1'
 
 interface ActiveRun {
   command: ExecuteCommand
@@ -134,25 +133,6 @@ async function listModels(ctx: Context): Promise<RuntimeModelFrame[]> {
     }
   }
   return result.sort((a, b) => a.provider.localeCompare(b.provider) || a.label.localeCompare(b.label))
-}
-
-async function resolveSelection(ctx: Context, command: ExecuteCommand): Promise<ModelSelection> {
-  const defaultModel = ctx.get('agentDefaultModel')
-  const llm = ctx.get('llm')
-  if (defaultModel === undefined || llm === undefined) throw new Error('DSH model services are unavailable')
-  const base = command.model === undefined
-    ? defaultModel.currentSelection()
-    : { provider: command.model.provider, model: command.model.id }
-  const info = await llm.resolveModelInfo(base.provider, base.model)
-  const effort = command.reasoning_effort ?? command.model?.reasoning_effort
-  if (effort !== undefined && !info.reasoning?.efforts.some(item => String(item.id) === effort)) {
-    throw new Error(`reasoning effort ${effort} is not supported by ${base.provider}/${base.model}`)
-  }
-  return {
-    provider: base.provider,
-    model: base.model,
-    ...effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) },
-  }
 }
 
 function mcpConfig(server: McpServerInput, taskCwd: string): McpClient.Config {
@@ -334,9 +314,11 @@ async function createOrResumeAgent(
 ): Promise<{ handle: AgentHandle; resumed: boolean }> {
   const agents = ctx.get('agents')
   if (agents === undefined) throw new Error('DSH agent registry is unavailable')
-  const selected: ModelSelectionRef = { current: selection, assembled: undefined }
-  const setup = async (agentCtx: Context): Promise<void> => {
-    installModelSelection(agentCtx, selected)
+  const setup = async (agentCtx: Context, agent: Agent): Promise<void> => {
+    if (active.command.resume_session_id !== undefined && !await sameDirectory(agent.session.header.cwd, active.command.cwd)) {
+      throw new ResumeRejectedError('the resumed DSH session belongs to a different working directory')
+    }
+    selectRunModel(agentCtx, agent, selection)
     agentCtx.on('approval/request', (_request, next) => {
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
       return Promise.resolve<ApprovalOutcome>('allowed-once').catch(() => next())
@@ -345,7 +327,7 @@ async function createOrResumeAgent(
       await agentCtx.plugin(McpClient, mcpConfig(server, active.command.cwd))
     }
   }
-  const options = { provider: selection.provider, model: selection.model }
+  const options = selection
   if (active.command.resume_session_id === undefined) {
     const handle = await agents.create({
       sessionId: SessionId(`multica-${randomUUID()}`),
@@ -364,10 +346,6 @@ async function createOrResumeAgent(
     })
   } catch (error: unknown) {
     throw new ResumeRejectedError(`could not resume DSH session ${active.command.resume_session_id}`, { cause: error })
-  }
-  if (!await sameDirectory(handle.agent.session.header.cwd, active.command.cwd)) {
-    await handle.dispose()
-    throw new ResumeRejectedError('the resumed DSH session belongs to a different working directory')
   }
   return { handle, resumed: true }
 }

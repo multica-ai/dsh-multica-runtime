@@ -18,16 +18,23 @@ a versioned JSONL protocol over stdio and composes over
 ## Local development
 
 The DSH packages used by this plugin are public npm packages. This checkout is
-currently validated against `@deepseek-ai/dsh@0.2.1-rc.2` and its matching
+currently validated against `@deepseek-ai/dsh@0.2.2-rc.1` and its matching
 `@deepseek-ai/dsh-*` package family. `engines.dsh` declares the supported range
 (`>=0.2.1-rc.2 <0.3.0`); DSH refuses to load the bundle outside it. DSH 0.1.x
-needs the previous `0.1.0-private.1` build.
+needs the previous `0.1.0-private.1` build. DSH 0.2.1 needs the previous
+`0.2.0-private.1` build. This build uses the session-owned
+`agent.model.select()` API introduced in DSH 0.2.2; it does not mutate the
+selection in an `agent/request` hook.
 
 ```bash
 pnpm install
 pnpm check
 pnpm build
 ```
+
+The loop regression uses a fake LLM and does not mount the local filesystem.
+The testkit's optional native `koffi` build is explicitly disabled; the tests
+use no user credentials or installed agent CLIs.
 
 Install the local bundle into a DSH profile after building it:
 
@@ -49,6 +56,13 @@ For a non-standard DSH installation, point the daemon at its launcher:
 ```bash
 export MULTICA_DSH_PATH=/absolute/path/to/dsh
 ```
+
+The runtime selects the complete provider, model, and reasoning effort during
+Agent setup, before the first step, for both new and resumed sessions. A run's
+selection replaces any stored selection on resume. An explicit execute effort
+overrides the model field's effort. With no model override, the profile's default
+selection (including effort) is used. An explicit model without effort uses that
+adapter's default, including after resume; unsupported efforts fail explicitly.
 
 The runtime contract includes:
 
