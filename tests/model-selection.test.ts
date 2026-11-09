@@ -67,17 +67,32 @@ it('selects before real step preparation on create, multiple turns, resume and r
     await turn(handle.agent)
     await turn(handle.agent)
     await ctx.sessions.flush(handle.agent.session)
+    // The fixture snapshots the complete log at the persistence boundary.
+    events.splice(0, events.length, ...structuredClone(handle.agent.session.snapshotEvents()))
+    expect(events.some(event => event.type === 'request/header')).toBe(true)
     await handle.dispose()
 
     // Restored selection wins over AgentOptions unless setup records the new choice.
-    const resumed = { provider: 'other', model: 'switched' }
+    const defaults = { provider: 'test', model: 'model' }
+    handle = await ctx.agents.resume({ resumeSessionId: SessionId('selection'), agentOptions: defaults, setup: setup(defaults) })
+    await turn(handle.agent)
+    await turn(handle.agent)
+    events.splice(0, events.length, ...structuredClone(handle.agent.session.snapshotEvents()))
+    await handle.dispose()
+
+    const resumed = { provider: 'other', model: 'switched', reasoningEffort: ReasoningEffortId('high') }
     handle = await ctx.agents.resume({ resumeSessionId: SessionId('selection'), agentOptions: resumed, setup: setup(resumed) })
     await turn(handle.agent)
     await turn(handle.agent)
     expect(adapter.requests.map(r => [r.provider, r.model, r.reasoningEffort])).toEqual([
       ['test', 'model', 'high'], ['test', 'model', 'high'],
-      ['other', 'switched', 'low'], ['other', 'switched', 'low'],
+      ['test', 'model', 'low'], ['test', 'model', 'low'],
+      ['other', 'switched', 'high'], ['other', 'switched', 'high'],
     ])
+    const notices = (request: GenerateOptions) => request.messages.flatMap(message => message.content)
+      .filter(block => block.type === 'text' && block.text.startsWith('[model changed:'))
+    expect(notices(adapter.requests[2])).toHaveLength(0)
+    expect(notices(adapter.requests[4])).toHaveLength(1)
     expect(handle.agent.model.current()).toEqual(resumed)
     expect(handle.agent.session.snapshotEvents().filter(e => e.type === 'model/selection').map(e => e.data).at(-1)).toEqual(resumed)
     await handle.dispose()
