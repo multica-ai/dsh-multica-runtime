@@ -32,6 +32,10 @@ pnpm check
 pnpm build
 ```
 
+The loop regression uses a fake LLM and does not mount the local filesystem.
+The testkit's optional native `koffi` build is explicitly disabled; the tests
+use no user credentials or installed agent CLIs.
+
 Install the local bundle into a DSH profile after building it:
 
 ```bash
