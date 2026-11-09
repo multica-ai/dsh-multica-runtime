@@ -315,6 +315,9 @@ async function createOrResumeAgent(
   const agents = ctx.get('agents')
   if (agents === undefined) throw new Error('DSH agent registry is unavailable')
   const setup = async (agentCtx: Context, agent: Agent): Promise<void> => {
+    if (active.command.resume_session_id !== undefined && !await sameDirectory(agent.session.header.cwd, active.command.cwd)) {
+      throw new ResumeRejectedError('the resumed DSH session belongs to a different working directory')
+    }
     selectRunModel(agentCtx, agent, selection)
     agentCtx.on('approval/request', (_request, next) => {
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
@@ -343,10 +346,6 @@ async function createOrResumeAgent(
     })
   } catch (error: unknown) {
     throw new ResumeRejectedError(`could not resume DSH session ${active.command.resume_session_id}`, { cause: error })
-  }
-  if (!await sameDirectory(handle.agent.session.header.cwd, active.command.cwd)) {
-    await handle.dispose()
-    throw new ResumeRejectedError('the resumed DSH session belongs to a different working directory')
   }
   return { handle, resumed: true }
 }
