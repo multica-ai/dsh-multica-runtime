@@ -23,7 +23,13 @@ function view(agent: FakeAgent): QuiescentAgent {
   return agent as unknown as QuiescentAgent
 }
 
-function lifecycle(waitForChildren: SubagentLifecycle['waitForChildren']): SubagentLifecycle {
+/** Build the service slice as DSH 0.2.2 mounts it: only the renamed wait method. */
+function lifecycle(waitForTreeWork: SubagentLifecycle['waitForTreeWork']): SubagentLifecycle {
+  return { waitForTreeWork, drainDescendants: vi.fn(() => Promise.resolve()) }
+}
+
+/** Build the service slice as DSH 0.2.1 mounts it: only the pre-rename wait method. */
+function legacyLifecycle(waitForChildren: SubagentLifecycle['waitForChildren']): SubagentLifecycle {
   return { waitForChildren, drainDescendants: vi.fn(() => Promise.resolve()) }
 }
 
@@ -47,8 +53,24 @@ describe('waitForQuiescence', () => {
 
     await waitForQuiescence(subagents, view(agent), new AbortController().signal)
 
-    expect(subagents.waitForChildren).toHaveBeenCalledTimes(3)
+    expect(subagents.waitForTreeWork).toHaveBeenCalledTimes(3)
     expect(agent.whenIdle).toHaveBeenCalledTimes(3)
+  })
+
+  it('falls back to waitForChildren on a DSH 0.2.1 service that predates the rename', async () => {
+    const agent = fakeAgent()
+    let pending = 1
+    const subagents = legacyLifecycle(vi.fn(() => {
+      if (pending === 0) return Promise.resolve(false)
+      pending -= 1
+      agent.session.seq += 1
+      return Promise.resolve(true)
+    }))
+
+    await waitForQuiescence(subagents, view(agent), new AbortController().signal)
+
+    expect(subagents.waitForChildren).toHaveBeenCalledTimes(2)
+    expect(agent.whenIdle).toHaveBeenCalledTimes(2)
   })
 
   it('loops again when the parent woke between idle and the child check', async () => {
