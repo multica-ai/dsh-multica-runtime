@@ -53,8 +53,11 @@ export async function waitForQuiescence(
     const idleSeq = agent.session.seq
     // Child settlement can wake the parent before the child wait observes it.
     // DSH 0.2.2 renamed waitForChildren to waitForTreeWork; accept either name.
-    const waitForChildSettled = subagents?.waitForTreeWork ?? subagents?.waitForChildren
-    const children = await Promise.race([waitForChildSettled?.(agent as Agent) ?? false, aborted])
+    // Call through the service object, never a plucked-off method reference:
+    // cordis service methods read sibling state through `this` (dsh-subagent's
+    // waitForTreeWork dereferences `this.manager`) and crash when unbound.
+    const waitName = subagents?.waitForTreeWork !== undefined ? 'waitForTreeWork' : 'waitForChildren'
+    const children = await Promise.race([subagents?.[waitName]?.(agent as Agent) ?? false, aborted])
     if (children === 'aborted') return 'cancelled'
     if (!children && agent.status === 'idle' && agent.session.seq === idleSeq) return 'settled'
   }

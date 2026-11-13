@@ -73,6 +73,22 @@ describe('waitForQuiescence', () => {
     expect(agent.whenIdle).toHaveBeenCalledTimes(2)
   })
 
+  it('invokes the wait method through the service so cordis methods keep their this', async () => {
+    const agent = fakeAgent()
+    // dsh-subagent's waitForTreeWork reads `this.manager` before any optional
+    // chaining can protect it; plucking the method off the service unbound
+    // crashes with "Cannot read properties of undefined (reading 'manager')".
+    const subagents: SubagentLifecycle & { manager: { rounds: number } } = {
+      manager: { rounds: 1 },
+      drainDescendants: vi.fn(() => Promise.resolve()),
+      waitForTreeWork() {
+        return this.manager.rounds === 1 ? Promise.resolve(false) : Promise.reject(new Error('unbound this'))
+      },
+    }
+
+    await expect(waitForQuiescence(subagents, view(agent), new AbortController().signal)).resolves.toBe('settled')
+  })
+
   it('loops again when the parent woke between idle and the child check', async () => {
     const agent = fakeAgent()
     let raced = false
