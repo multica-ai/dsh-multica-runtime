@@ -8,7 +8,6 @@ import {
   type Agent,
   type AgentHandle,
   type ModelSelection,
-  type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
@@ -156,6 +155,8 @@ function mcpConfig(server: McpServerInput, taskCwd: string): McpClient.Config {
   const common = {
     serverName: normalizeMcpServerName(server.name),
     toolCallTimeoutMs: server.tool_call_timeout_ms ?? 60_000,
+    closeTimeoutMs: 5_000,
+    expandTemplates: false,
     failOnStartupError: true,
   }
   if (server.transport === 'stdio') {
@@ -195,8 +196,6 @@ function renderBlock(block: ContentBlock): string {
       return `[image attachment ${block.attachment.attachmentId}]`
     case 'tool-call':
       return `[tool call ${block.name}: ${block.arguments}]`
-    case 'tool-result':
-      return block.content.map(renderBlock).join('')
     default:
       return JSON.stringify(block)
   }
@@ -250,7 +249,7 @@ function observeSessionEvent(active: ActiveRun, session: Agent['session'], event
     return
   }
   if (event.type === 'tool/result') {
-    const result = event.data.message.content[0]
+    const result = event.data.message
     const rendered = truncateUtf8(result.content.map(renderBlock).join(''))
     writeFrame({
       v: PROTOCOL_VERSION,
@@ -311,9 +310,8 @@ async function createOrResumeAgent(
 ): Promise<{ handle: AgentHandle; resumed: boolean }> {
   const agents = ctx.get('agents')
   if (agents === undefined) throw new Error('DSH agent registry is unavailable')
-  const selected: ModelSelectionRef = { current: selection, assembled: undefined }
   const setup = async (agentCtx: Context): Promise<void> => {
-    installModelSelection(agentCtx, selected)
+    installModelSelection(agentCtx)
     agentCtx.on('approval/request', (_request, next) => {
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
       return Promise.resolve<ApprovalOutcome>('allowed-once').catch(() => next())
@@ -322,7 +320,11 @@ async function createOrResumeAgent(
       await agentCtx.plugin(McpClient, mcpConfig(server, active.command.cwd))
     }
   }
-  const options = { provider: selection.provider, model: selection.model }
+  const options = {
+    provider: selection.provider,
+    model: selection.model,
+    ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+  }
   if (active.command.resume_session_id === undefined) {
     const handle = await agents.create({
       sessionId: SessionId(`multica-${randomUUID()}`),

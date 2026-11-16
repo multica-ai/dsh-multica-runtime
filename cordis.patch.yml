@@ -5,7 +5,10 @@
 - id: hmr
   disabled: true
 
-- id: telemetry-otel
+- id: otel
+  disabled: true
+
+- id: session-telemetry-otel
   disabled: true
 
 - id: session-persistence-jsonl
