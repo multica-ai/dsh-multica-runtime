@@ -23,11 +23,11 @@ function view(agent: FakeAgent): QuiescentAgent {
   return agent as unknown as QuiescentAgent
 }
 
-function lifecycle(waitForChildren: SubagentLifecycle['waitForChildren']): SubagentLifecycle {
-  return { waitForChildren, drainDescendants: vi.fn(() => Promise.resolve()) }
-}
+describe.each(['waitForTreeWork', 'waitForChildren'] as const)('waitForQuiescence using %s', (method) => {
+  function lifecycle(wait: NonNullable<SubagentLifecycle['waitForTreeWork']>): SubagentLifecycle {
+    return { [method]: wait, drainDescendants: vi.fn(() => Promise.resolve()) }
+  }
 
-describe('waitForQuiescence', () => {
   it('returns after one idle check when the profile mounts no subagents', async () => {
     const agent = fakeAgent()
     await expect(waitForQuiescence(undefined, view(agent), new AbortController().signal)).resolves.toBe('settled')
@@ -47,7 +47,7 @@ describe('waitForQuiescence', () => {
 
     await waitForQuiescence(subagents, view(agent), new AbortController().signal)
 
-    expect(subagents.waitForChildren).toHaveBeenCalledTimes(3)
+    expect(subagents[method]).toHaveBeenCalledTimes(3)
     expect(agent.whenIdle).toHaveBeenCalledTimes(3)
   })
 
@@ -103,6 +103,33 @@ describe('waitForQuiescence', () => {
 
     await expect(done).resolves.toBe('cancelled')
     expect(agent.whenIdle).toHaveBeenCalledTimes(idleCallsBeforeCancel)
+  })
+})
+
+describe('subagent API compatibility', () => {
+  it('prefers the new API and preserves the service receiver', async () => {
+    const agent = fakeAgent()
+    const subagents: SubagentLifecycle = {
+      waitForTreeWork: vi.fn(function (this: SubagentLifecycle) {
+        expect(this).toBe(subagents)
+        return Promise.resolve(false)
+      }),
+      waitForChildren: vi.fn(() => Promise.reject(new Error('legacy API called'))),
+      drainDescendants: vi.fn(() => Promise.resolve()),
+    }
+
+    await expect(waitForQuiescence(subagents, view(agent), new AbortController().signal)).resolves.toBe('settled')
+    expect(subagents.waitForTreeWork).toHaveBeenCalledWith(agent)
+    expect(subagents.waitForChildren).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unsupported service instead of silently skipping child work', async () => {
+    const agent = fakeAgent()
+    const subagents = { drainDescendants: vi.fn(() => Promise.resolve()) }
+
+    await expect(waitForQuiescence(subagents, view(agent), new AbortController().signal))
+      .rejects.toThrow('Unsupported DSH subagents service')
+    expect(agent.whenIdle).not.toHaveBeenCalled()
   })
 })
 

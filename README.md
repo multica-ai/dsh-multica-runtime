@@ -23,6 +23,9 @@ currently validated against `@deepseek-ai/dsh@0.2.1-rc.2` and its matching
 (`>=0.2.1-rc.2 <0.3.0`); DSH refuses to load the bundle outside it. DSH 0.1.x
 needs the previous `0.1.0-private.1` build.
 
+The lifecycle bridge supports both DSH 0.2.1's `waitForChildren` and DSH 0.2.2's
+`waitForTreeWork` subagent APIs, preferring the latter when available.
+
 ```bash
 pnpm install
 pnpm check
