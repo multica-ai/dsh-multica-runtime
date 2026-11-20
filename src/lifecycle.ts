@@ -3,7 +3,9 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 /** The slice of DSH's optional `subagents` service this bridge drives. */
 export interface SubagentLifecycle {
   /** Resolves true when a child settled and may have woken the parent for another round. */
-  waitForChildren(parent: Agent): Promise<boolean>
+  waitForTreeWork?(parent: Agent): Promise<boolean>
+  /** DSH 0.2.1 compatibility; renamed in DSH 0.2.2. */
+  waitForChildren?(parent: Agent): Promise<boolean>
   /** Interrupt and settle every managed descendant of the given roots. */
   drainDescendants(parents: readonly Agent[]): Promise<void>
 }
@@ -36,6 +38,10 @@ export async function waitForQuiescence(
   agent: QuiescentAgent,
   signal: AbortSignal,
 ): Promise<'settled' | 'cancelled'> {
+  const waitForWork = subagents?.waitForTreeWork ?? subagents?.waitForChildren
+  if (subagents !== undefined && typeof waitForWork !== 'function') {
+    throw new Error('Unsupported DSH subagents service: expected waitForTreeWork or waitForChildren')
+  }
   const aborted = new Promise<'aborted'>((resolveAborted) => {
     if (signal.aborted) resolveAborted('aborted')
     else signal.addEventListener('abort', () => resolveAborted('aborted'), { once: true })
@@ -44,7 +50,7 @@ export async function waitForQuiescence(
     if (await Promise.race([agent.whenIdle(), aborted]) === 'aborted') return 'cancelled'
     const idleSeq = agent.session.seq
     // Child settlement can wake the parent before the child wait observes it.
-    const children = await Promise.race([subagents?.waitForChildren(agent as Agent) ?? false, aborted])
+    const children = await Promise.race([waitForWork?.call(subagents, agent as Agent) ?? false, aborted])
     if (children === 'aborted') return 'cancelled'
     if (!children && agent.status === 'idle' && agent.session.seq === idleSeq) return 'settled'
   }
